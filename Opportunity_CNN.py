@@ -5,12 +5,13 @@ import math
 from sklearn.metrics import f1_score
 import tensorflow as tf
 from tensorflow.contrib import rnn
+from tf_metrics import *
 
 data_path = os.getcwd() + "/output1/"
 def load_all(i):
 	data = np.load(data_path+'S'+str(i)+'-Drill.dat_data.npy')
 	labels = np.load(data_path+'S'+str(i)+'-Drill.dat_activity_labels.npy')
-	for j in range (1, 6):
+	for j in range (1, 5):
 		data = np.vstack((data, np.load(data_path+'S'+str(i)+'-ADL'+str(j)+'.dat_data.npy')))
 		labels = np.vstack((labels, np.load(data_path+'S'+str(i)+'-ADL'+str(j)+'.dat_activity_labels.npy')))
 	return (data, labels)
@@ -22,7 +23,7 @@ def load_all(i):
 ## Parameters
 learning_rate = 0.001
 batch_size = 100
-display_step = 1
+display_step = 5
 training_iters = 100000
 # Network Parameters
 input_channel = 133 # opportunity data input (img shape: 28*28)
@@ -103,7 +104,7 @@ def apply_lstm(x, weights, biases, rnn_layers):
 
 def apply_dense(x, input_size, out_channels):
 	#x = tf.squeeze(x)
-	x = tf.reshape(x, [batch_size, -1])
+	x = tf.reshape(x, [-1, input_size])
 	weights = weight_variable([input_size, out_channels])
 	biases = bias_variable([out_channels])
 	return tf.nn.relu(tf.add(tf.matmul(x, weights),biases))
@@ -124,6 +125,7 @@ x = tf.placeholder("float", [None, 1, window_size, input_channel])
 y = tf.placeholder("float", [None, n_classes])
 #_x_ = tf.variable(tf.empty())
 x_ = tf.transpose(x, [0, 3, 2, 1])
+#x_ shape [batch_size, input_channels, window_size, 1]
 #x_ = tf.split(x_, input_channel)
 #for 
 layer2 = apply_conv(x_, 5, 1, conv_multiplier)
@@ -137,15 +139,15 @@ layer5 = apply_conv(layer4, 5, conv_multiplier, conv_multiplier)
 #layer4 = apply_depthwise_conv(layer3, 5, conv_multiplier * input_channel * 2, 2)
 #layer5 = apply_depthwise_conv(layer4, 5, conv_multiplier * input_channel * 4, 2)
 #layer5 = layer3
-layer6_Base = apply_dense(layer5, 1 * conv_multiplier * input_channel * (window_size - 4 * 4), 128)
-layer7_Base = apply_dense(layer6_Base, 128, 128)
+#layer6_Base = apply_dense(layer5, 1 * conv_multiplier * input_channel * (window_size - 4 * 4), 128)
+#layer7_Base = apply_dense(layer6_Base, 128, 128)
 #layer7_Base = layer6_Base
-layerOut = tf.matmul(layer7_Base, last_weights) + last_biases
+#layerOut = tf.matmul(layer7_Base, last_weights) + last_biases
 
 
 
-#layer67 = apply_lstm(layer5, last_weights, last_biases, 2)
-#layerOut = layer67
+layer67 = apply_lstm(layer5, last_weights, last_biases, 3)
+layerOut = layer67
 result = tf.nn.softmax(layerOut)
 cross_entropy = -tf.reduce_sum(y*tf.log(result))
 train_step = tf.train.AdamOptimizer(learning_rate).minimize(cross_entropy)
@@ -161,28 +163,30 @@ sess = tf.InteractiveSession()
 sess.run(init)
 
 def main():
-	start = 0
-	while start + batch_size < train_data.shape[0]:
-		batch_x = train_data[start : start + batch_size]
-		batch_y = train_labels[start : start + batch_size]
-		sess.run(train_step, feed_dict={x: batch_x, y: batch_y})
-		if start % (display_step * batch_size) == 0:
-			# Calculate batch accuracy
-			acc = sess.run(accuracy, feed_dict={x: batch_x, y: batch_y})
-			preds = sess.run(tf.argmax(result, 1), feed_dict={x: batch_x})
-			
-			#for debugging
-			if (acc == 0 or acc > 0.3 or 1):
-				dis = [0] * n_classes
-				y_ = np.argmax(batch_y, axis = 1)
-				for _y in y_:
-					dis[_y] += 1
-				print (dis)
-				print (preds)
+	for iteration in range(10):
+		start = 0
+		while start + batch_size < train_data.shape[0] - 10 * batch_size:
+			batch_x = train_data[start : start + batch_size]
+			batch_y = train_labels[start : start + batch_size]
+			sess.run(train_step, feed_dict={x: batch_x, y: batch_y})
+			if start % (display_step * batch_size) == 0:
+				# Calculate batch accuracy
+				acc = sess.run(accuracy, feed_dict={x: batch_x, y: batch_y})
+				preds = sess.run(tf.argmax(result, 1), feed_dict={x: batch_x})
+				
+				#for debugging
+				if (acc == 0 or acc > 0.3 or 1):
+					dis = [0] * n_classes
+					y_ = np.argmax(batch_y, axis = 1)
+					for _y in y_:
+						dis[_y] += 1
+					print (dis)
+					print (preds)
 
-			print("Iter " + str(start) +  ", Training Accuracy= " + \
-				  "{:.5f}".format(acc))
-		start += batch_size
+				print(str(iteration) + ": " + "Iter " + str(start) +  ", Training Accuracy= " + \
+					  "{:.5f}".format(acc))
+			start += batch_size
+	tf_confusion_metrics(result, train_labels[start:], sess, {x : train_data[start:]})
 
 def max(data):
 	max_item = 0
