@@ -14,10 +14,10 @@ data_path = os.getcwd() + "../output1/"
 
 ## Parameters
 global_step = tf.Variable(0, trainable=False)
-base_learning_rate = 0.001
-learning_rate = tf.train.exponential_decay(base_learning_rate, global_step,
-                                           200, 0.9, staircase=True)
-#learning_rate = 0.001
+#base_learning_rate = 0.0001
+#learning_rate = tf.train.exponential_decay(base_learning_rate, global_step,
+#                                           150, 0.9)
+learning_rate = 0.0004
 batch_size = 100
 display_step = 15
 # Network Parameters
@@ -248,7 +248,10 @@ layer67 = apply_lstm(layer5, last_weights, last_biases, rnn_layers, keep_prob)
 layerOut = layer67
 result = tf.nn.softmax(layerOut)
 cross_entropy = -tf.reduce_sum(y*tf.log(result))
-train_step = tf.train.RMSPropOptimizer(learning_rate).minimize(cross_entropy, global_step=global_step)
+all_vars   = tf.trainable_variables() 
+lossL2 = tf.add_n([ tf.nn.l2_loss(v) for v in all_vars if 'bias' not in v.name ]) * 0.0001
+loss = tf.add(cross_entropy, lossL2)
+train_step = tf.train.RMSPropOptimizer(learning_rate).minimize(loss, global_step=global_step)
 correct_prediction = tf.equal(tf.argmax(result,1), tf.argmax(y,1))
 accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float"))
 
@@ -273,63 +276,49 @@ def iterate_minibatches(inputs, targets, batchsize, shuffle=False):
 		yield inputs[excerpt], targets[excerpt]
 
 def main():
-	for iteration in range(50):
+	for iteration in range(100):
 		start_random = random.randint(0, batch_size)
 		start = start_random
 		#learning_rate = (50 - iteration) * base_learning_rate / 50
-		while start + batch_size < X_train.shape[0]:
-			batch_x = X_train[start : start + batch_size]
-			batch_y = y_train[start : start + batch_size]
+		step = 0
+		for batch in iterate_minibatches(X_train, y_train, batch_size, shuffle=True):
+			batch_x, batch_y = batch
 			acc = sess.run(accuracy, feed_dict={x: batch_x, y: batch_y, keep_prob : 1.0})
 			if (acc < 0.7 and iteration > 20):
 				sess.run(train_step, feed_dict={x: batch_x, y: batch_y, keep_prob : 0.5})
-			if (acc < 0.9):
+			if (acc < 0.8 + 0.0015 * iteration):
 				sess.run(train_step, feed_dict={x: batch_x, y: batch_y, keep_prob : 0.5})
-			if ((start - start_random) % (display_step * batch_size) == 0):
+			'''
+			if (step % 100 == 0):
 				# Calculate batch accuracy
 				acc, preds = sess.run([accuracy, tf.argmax(result, 1)], feed_dict={x: batch_x, y: batch_y, keep_prob : 1.0})
-				#global_step_now, learning_rate_now = sess.run([global_step, learning_rate])
-				#print ("step: " + str(global_step_now) + " learning-rate: " + str(learning_rate_now))
+				global_step_now, learning_rate_now = sess.run([global_step, learning_rate])
+				print ("step: " + str(global_step_now) + " learning-rate: " + str(learning_rate_now))
 				#for debugging
-				if (acc == 0 or acc > 0.3 or 1):
-					dis = [0] * n_classes
-					y_ = np.argmax(batch_y, axis = 1)
-					for _y in y_:
-						dis[_y] += 1
-					print (dis)
-					print (preds)
-
-				print(str(iteration) + ": " + "Iter " + str(start) +  ", Training Accuracy= " + \
+				dis = [0] * n_classes
+				y_ = np.argmax(batch_y, axis = 1)
+				for _y in y_:
+					dis[_y] += 1
+				print (dis)
+				print (preds)
+				print(str(step) + ": " + "Iter " + str(iteration) +  ", Training Accuracy= " + \
 					  "{:.5f}".format(acc))
-			start += batch_size
-	
-	# Classification of the testing data
-	print("Testing: Processing {0} instances in mini-batches of {1}".format(X_test.shape[0], batch_size))
-	test_pred = np.empty((0))
-	test_true = np.empty((0))
-	#tf_confusion_metrics(result, y_train[start:], sess, {x : X_train[start:]})
-	for batch in iterate_minibatches(X_test, y_test, batch_size):
-		inputs, targets = batch
-		acc, y_pred = sess.run([accuracy, tf.argmax(result, 1)], feed_dict = {x : inputs, y : targets, keep_prob : 1.0})
-		test_pred = np.append(test_pred, y_pred, axis=0)
-		test_true = np.append(test_true, np.argmax(targets, axis=1), axis=0)
-	'''
-	#test_acc, test_preds = sess.run([accuracy, tf.argmax(result, 1)], feed_dict = {x : X_test, y : y_test, keep_prob : 1.0})
-	print("Test Accuracy= " + "{:.5f}".format(test_acc))
+			step += 1
+			'''
+		
+		# Classification of the testing data
+		print("Testing: Processing {0} instances in mini-batches of {1}".format(X_test.shape[0], batch_size))
+		test_pred = np.empty((0))
+		test_true = np.empty((0))
+		#tf_confusion_metrics(result, y_train[start:], sess, {x : X_train[start:]})
+		for batch in iterate_minibatches(X_test, y_test, batch_size):
+			inputs, targets = batch
+			acc, y_pred = sess.run([accuracy, tf.argmax(result, 1)], feed_dict = {x : inputs, y : targets, keep_prob : 1.0})
+			test_pred = np.append(test_pred, y_pred, axis=0)
+			test_true = np.append(test_true, np.argmax(targets, axis=1), axis=0)
 
-	y_ = np.argmax(y_test, axis = 1)
-	print (y_)
-	print (test_preds)
-	f1 = sk.metrics.f1_score(y_, test_preds, average="weighted")
-	print("Test F1 score= " + "{:.5f}".format(f1))
-
-	test1_acc, test1_preds = sess.run([accuracy, tf.argmax(result, 1)], feed_dict = {x : X_test1, y : y_test1, keep_prob : 1.0})
-	y_ = np.argmax(y_test1, axis = 1)
-	'''
-	f1 = sk.metrics.f1_score(test_true, test_pred, average="weighted")
-	print("Test1 F1 score= " + "{:.5f}".format(f1))
-	#f11 = sk.metrics.f1_score(test_true_trim, test_pred_trim, average="weighted")
-	#print("Test1 without null F1 score= " + "{:.5f}".format(f11))
+		f1 = sk.metrics.f1_score(test_true, test_pred, average="weighted")
+		print("Iter " + str(iteration) + " Test1 F1 score= " + "{:.5f}".format(f1))
 
 def max(data):
 	max_item = 0
