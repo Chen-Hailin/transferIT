@@ -2,9 +2,10 @@ import os
 import numpy as np
 import math
 
-root = '/Users/apple/Desktop/CHL/CS Study/CZ4041/OpportunityUCIDataset/dataset/'
+root_path = os.getcwd()
+root = root_path + '/OpportunityUCIDataset/dataset/'
 #filename='S1-ADL1.dat'
-out_root = '/Users/apple/Desktop/CHL/CS Study/CZ4041/transferIT/output1/'
+out_root = root_path + '/output1/'
 
 #filename='S1-ADL1.dat'
 #output_file='S1-ADL1'
@@ -12,16 +13,26 @@ out_root = '/Users/apple/Desktop/CHL/CS Study/CZ4041/transferIT/output1/'
 def LoadData(data_root):
 	f = open(data_root, 'r')
 	raw_array = np.fromfile(f, dtype=float, sep=' ')
-
+	m = np.reshape(raw_array, (-1,250))
+	'''
 	mask_window_L = 134
 	mask_window_H = 242
 
-	m = np.reshape(raw_array, (-1,250))
 
 	mask = [i for i in range(mask_window_L,mask_window_H+1)]
 	mask.extend([i for i in range(244,249)])
 	mask.extend([0])
-	m = np.delete(m,mask,1)
+	'''
+	features_delete = np.arange(46, 50)
+	features_delete = np.concatenate([features_delete, np.arange(59, 63)])
+	features_delete = np.concatenate([features_delete, np.arange(72, 76)])
+	features_delete = np.concatenate([features_delete, np.arange(85, 89)])
+	features_delete = np.concatenate([features_delete, np.arange(98, 102)])
+	features_delete = np.concatenate([features_delete, np.arange(134, 243)])
+	features_delete = np.concatenate([features_delete, np.arange(244, 249)])
+	features_delete = np.concatenate([features_delete, np.arange(0, 1)])
+
+	m = np.delete(m,features_delete,1)
 	print(m.shape)
 	return m
 
@@ -99,7 +110,7 @@ def main(filename):
 	data = LoadData(data_root)
 	activity_labels = ActivityLabels(data)
 	locomotion_labels = LocomotionLabels(data)
-	data = np.delete(data, [133,134], axis=1)
+	data = np.delete(data, [113,114], axis=1)
 	InterpolateNan(data)
 	Normalize(data)
 	null_rows = Delete_null(data, activity_labels)

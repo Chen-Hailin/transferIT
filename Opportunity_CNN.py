@@ -10,7 +10,7 @@ import cPickle as cp
 from sliding_window import sliding_window
 import random
 
-data_path = os.getcwd() + "../output1/"
+data_path = os.getcwd() + "/../output1/"
 
 ## Parameters
 global_step = tf.Variable(0, trainable=False)
@@ -115,39 +115,40 @@ def trim_null(X, y):
 	X_trim = np.delete(X, nullset, axis=0)
 	y_trim = np.delete(y, nullset, axis=0)
 	return (X_trim, y_trim)
-#raw_X_test, raw_y_test = load_test(2)
-#raw_X_test1, raw_y_test1 = load_test(1)
 
-#raw_X_train, raw_train_activity_labels = load_all(2)
+raw_X_test, raw_y_test = load_test(1)
+raw_X_test1, raw_y_test1 = load_test(2)
+
+raw_X_train, raw_train_activity_labels = load_all(1)
 print ("finish fetching")
 
 # X_train : [num_windows, 1, SLIDING_WINDOW_LENGTH, in_channels]
 # y_train : [num_windows, n_classes]
-#X_train, y_train = segment_signal(raw_X_train, raw_train_activity_labels) 
-#X_train = np.expand_dims(X_train, 1)
+X_train, y_train = segment_signal(raw_X_train, raw_train_activity_labels)
+X_train = np.expand_dims(X_train, 1)
 #X_train = np.load(data_path+"X_train1_123D.npy")
 #y_train = np.load(data_path+"y_train_123D.npy")
 
-#X_test, y_test = segment_signal(raw_X_test, raw_y_test)
-#X_test = np.expand_dims(X_test, 1)
+X_test, y_test = segment_signal(raw_X_test, raw_y_test)
+X_test = np.expand_dims(X_test, 1)
 
-#X_test1, y_test1 = segment_signal(raw_X_test1, raw_y_test1)
-#X_test1 = np.expand_dims(X_test1, 1)
+X_test1, y_test1 = segment_signal(raw_X_test1, raw_y_test1)
+X_test1 = np.expand_dims(X_test1, 1)
 #X_test = np.load(data_path+"X_test_23_45.npy")
 #y_test = np.load(data_path+"y_test_23_45.npy")
 
-X_train, y_train, X_test, y_test = load_dataset('data/oppChallenge_gestures.data')
-assert NB_SENSOR_CHANNELS == X_train.shape[1]
-X_train, y_train = trim_null(X_train, y_train)
-X_test, y_test = trim_null(X_test, y_test)
+#X_train, y_train, X_test, y_test = load_dataset('data/oppChallenge_gestures.data')
+#assert NB_SENSOR_CHANNELS == X_train.shape[1]
+#X_train, y_train = trim_null(X_train, y_train)
+#X_test, y_test = trim_null(X_test, y_test)
 # Sensor data is segmented using a sliding window mechanism
-X_test, y_test = opp_sliding_window(X_test, y_test, SLIDING_WINDOW_LENGTH, SLIDING_WINDOW_STEP)
-X_train, y_train = opp_sliding_window(X_train, y_train, SLIDING_WINDOW_LENGTH, SLIDING_WINDOW_STEP)
+#X_test, y_test = opp_sliding_window(X_test, y_test, SLIDING_WINDOW_LENGTH, SLIDING_WINDOW_STEP)
+#X_train, y_train = opp_sliding_window(X_train, y_train, SLIDING_WINDOW_LENGTH, SLIDING_WINDOW_STEP)
 # Data is reshaped since the input of the network is a 4 dimension tensor
-X_test = X_test.reshape((-1, 1, SLIDING_WINDOW_LENGTH, NB_SENSOR_CHANNELS))
-X_train = X_train.reshape((-1, 1, SLIDING_WINDOW_LENGTH, NB_SENSOR_CHANNELS))
-y_train = ReshapeActivityLabels(y_train)
-y_test = ReshapeActivityLabels(y_test)
+#X_test = X_test.reshape((-1, 1, SLIDING_WINDOW_LENGTH, NB_SENSOR_CHANNELS))
+#X_train = X_train.reshape((-1, 1, SLIDING_WINDOW_LENGTH, NB_SENSOR_CHANNELS))
+#y_train = ReshapeActivityLabels(y_train)
+#y_test = ReshapeActivityLabels(y_test)
 '''
 	our model starts
 '''
@@ -249,7 +250,7 @@ layerOut = layer67
 result = tf.nn.softmax(layerOut)
 cross_entropy = -tf.reduce_sum(y*tf.log(result))
 all_vars   = tf.trainable_variables() 
-lossL2 = tf.add_n([ tf.nn.l2_loss(v) for v in all_vars if 'bias' not in v.name ]) * 0.0001
+lossL2 = tf.add_n([ tf.nn.l2_loss(v) for v in all_vars if 'bias' not in v.name ]) * 0.0005
 loss = tf.add(cross_entropy, lossL2)
 train_step = tf.train.RMSPropOptimizer(learning_rate).minimize(loss, global_step=global_step)
 correct_prediction = tf.equal(tf.argmax(result,1), tf.argmax(y,1))
@@ -277,9 +278,8 @@ def iterate_minibatches(inputs, targets, batchsize, shuffle=False):
 
 def main():
 	for iteration in range(100):
-		start_random = random.randint(0, batch_size)
-		start = start_random
-		#learning_rate = (50 - iteration) * base_learning_rate / 50
+		#start_random = random.randint(0, batch_size)
+		#start = start_random
 		step = 0
 		for batch in iterate_minibatches(X_train, y_train, batch_size, shuffle=True):
 			batch_x, batch_y = batch
@@ -307,11 +307,22 @@ def main():
 			'''
 		
 		# Classification of the testing data
-		print("Testing: Processing {0} instances in mini-batches of {1}".format(X_test.shape[0], batch_size))
+		#print("Testing: Processing {0} instances in mini-batches of {1}".format(X_test.shape[0], batch_size))
 		test_pred = np.empty((0))
 		test_true = np.empty((0))
 		#tf_confusion_metrics(result, y_train[start:], sess, {x : X_train[start:]})
-		for batch in iterate_minibatches(X_test, y_test, batch_size):
+		for batch in iterate_minibatches(X_train, y_train, batch_size):
+			inputs, targets = batch
+			acc, y_pred = sess.run([accuracy, tf.argmax(result, 1)], feed_dict = {x : inputs, y : targets, keep_prob : 1.0})
+			test_pred = np.append(test_pred, y_pred, axis=0)
+			test_true = np.append(test_true, np.argmax(targets, axis=1), axis=0)
+
+		f1 = sk.metrics.f1_score(test_true, test_pred, average="weighted")
+		print("Iter " + str(iteration) + " Test F1 score= " + "{:.5f}".format(f1))
+		test_pred = np.empty((0))
+		test_true = np.empty((0))
+		#tf_confusion_metrics(result, y_train[start:], sess, {x : X_train[start:]})
+		for batch in iterate_minibatches(X_test1, y_test1, batch_size):
 			inputs, targets = batch
 			acc, y_pred = sess.run([accuracy, tf.argmax(result, 1)], feed_dict = {x : inputs, y : targets, keep_prob : 1.0})
 			test_pred = np.append(test_pred, y_pred, axis=0)
