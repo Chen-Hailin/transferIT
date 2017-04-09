@@ -120,16 +120,10 @@ class DANN_Model(object):
 		with tf.variable_scope('domain_predictor'):
 			# Flip the gradient when backpropagating through this operation
 			feat = flip_gradient(self.feature, self.l)
-			'''
 			layer_d1 = apply_dense(feat, conv_multiplier*(SLIDING_WINDOW_LENGTH - 4 * 4)*NB_SENSOR_CHANNELS, n_hidden)
 			d_weights = weight_variable([n_hidden, 2])
 			d_biases = bias_variable([2])
 			layer_d2 = tf.matmul(layer_d1, d_weights) + d_biases
-			'''
-			featr = tf.reshape(feat, [-1, conv_multiplier*(SLIDING_WINDOW_LENGTH - 4 * 4)*NB_SENSOR_CHANNELS])
-			d_weights = weight_variable([conv_multiplier*(SLIDING_WINDOW_LENGTH - 4 * 4)*NB_SENSOR_CHANNELS, 2])
-			d_biases = bias_variable([2])
-			layer_d2 = tf.matmul(featr, d_weights) + d_biases
 			self.domain_pred = tf.nn.softmax(layer_d2)
 			self.domain_loss = tf.nn.softmax_cross_entropy_with_logits(logits=layer_d2, labels=self.domain)
 
@@ -143,7 +137,6 @@ with graph.as_default():
 	domain_loss = tf.reduce_mean(model.domain_loss)
 	total_loss = pred_loss + domain_loss
 	regular_train_op = tf.train.RMSPropOptimizer(learning_rate).minimize(pred_loss)
-	domain_train_op = tf.train.RMSPropOptimizer(learning_rate*0.5).minimize(domain_loss)
 	dann_train_op = tf.train.RMSPropOptimizer(learning_rate).minimize(total_loss)
 	# Evaluation
 	pred_labels = tf.argmax(model.pred, 1)
@@ -152,21 +145,17 @@ with graph.as_default():
 	correct_domain_pred = tf.equal(tf.argmax(model.domain, 1), tf.argmax(model.domain_pred, 1))
 	domain_acc = tf.reduce_mean(tf.cast(correct_domain_pred, tf.float32))
 
-def iterate_minibatches(inputs, targets, inputs_domains, domains, batchsize, shuffle=False):
-	assert len(inputs) == len(targets) and len(inputs_domains) == len(domains)
+def iterate_minibatches(inputs, targets, domains, batchsize, shuffle=False):
+	assert len(inputs) == len(targets)
 	if shuffle:
 		indices = np.arange(len(inputs))
 		np.random.shuffle(indices)
-		domain_indices = np.arange(len(domains))
-		np.random.shuffle(domain_indices)
 	for start_idx in range(0, len(inputs) - batchsize + 1, batchsize):
 		if shuffle:
 			excerpt = indices[start_idx:start_idx + batchsize]
-			excerpt_d = domain_indices[start_idx:start_idx + batchsize]
 		else:
 			excerpt = slice(start_idx, start_idx + batchsize)
-			excerpt_d = slice(start_idx, start_idx + batchsize)
-		yield inputs[excerpt], targets[excerpt], inputs_domains[excerpt_d], domains[excerpt_d]
+		yield inputs[excerpt], targets[excerpt], domains[excerpt]
 
 '''
 	Constructing train / test data here
@@ -216,7 +205,7 @@ D_train = np.full((X_train.shape[0],2),[1,0],dtype=float)
 	Load target subject train data
 '''
 if(ADD_TARGET):
-	if(os.path.exists(target_path+"_unlabelled_data.npy")):
+	if(os.path.exists(target_path+"_labelled_data.npy")):
 		X_train_target = np.load(target_path+"_unlabelled_data.npy")
 		y_train_target = np.full((X_train_target.shape[0],n_classes),0, dtype=float)
 	else:
@@ -226,9 +215,9 @@ if(ADD_TARGET):
 		y_train_target = np.full((X_train_target.shape[0], n_classes),0,dtype=float)
 		np.save(target_path+"_unlabelled_data", X_train_target)
 	D_train_target = np.full((X_train_target.shape[0],2),[0,1],dtype=float)
-	X_train_domain = np.vstack((X_train, X_train_target))
-	#y_train = np.vstack((y_train, y_train_target))
-	D_train_domain = np.vstack((D_train, D_train_target))
+	X_train = np.vstack((X_train, X_train_target))
+	y_train = np.vstack((y_train, y_train_target))
+	D_train = np.vstack((D_train, D_train_target))
 print ("finish fetching")
 
 
@@ -236,83 +225,64 @@ print ("finish fetching")
 # y_train/test shape : [num_windows, n_classes]
 f1_lst = []
 f1_tlst = []
-#def main():
-gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.3)
-
-with tf.Session(graph=graph, config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
-	init = tf.global_variables_initializer()
-	sess.run(init)
-	max_epoch = 20
-	for epoch in range(max_epoch):
-		# Adaptation param and learning rate schedule as described in the paper
-		p = float(epoch) / max_epoch 
-		l = (2. / (1 + np.exp(-10. * p)) - 1)*3000
-		#l = np.exp(p)*4000 + (2. / (1 + np.exp(-10. * p)) - 1)*2000 + 2000
-		#l = 5 + ((float(epoch) / 100) ** 2) * 30
-		#l = 300
-		'''
-			Train the model on all training data
-		'''
-		for batch in iterate_minibatches(X_train, y_train, X_train_domain, D_train_domain, batch_size, shuffle=True):
-			batch_x, batch_y, batch_x_d, batch_d = batch
+def main():
+	with tf.Session(graph=graph) as sess:
+		init = tf.global_variables_initializer()
+		sess.run(init)
+		for epoch in range(100):
+			# Adaptation param and learning rate schedule as described in the paper
+			p = float(epoch) / 100
+			l = (2. / (1. + np.exp(-10. * p)) - 1)*3000
 			'''
-			correct_preds_sum = sess.run(tf.reduce_sum(tf.cast(correct_label_pred, "float")), feed_dict={x: batch_x, y: batch_y, keep_prob : 1.0})
-			batch_y_ = np.argmax(batch_y, axis=1)
-			unlabelled_rows_sum = (batch_y_ == 0).sum()
-			acc = correct_preds_sum / (batch_size - unlabelled_rows_sum)
+				Train the model on all training data
 			'''
-			acc = sess.run(label_acc, feed_dict={model.x: batch_x, model.y: batch_y, model.keep_prob : 1.0})
-			if (acc < 0.7 and epoch > 20):
-				sess.run(regular_train_op, feed_dict={model.x: batch_x, model.y: batch_y, model.keep_prob : 0.5})
-				sess.run(domain_train_op, feed_dict={model.x: batch_x_d, model.domain: batch_d, model.l: l, model.keep_prob: 0.5})
-			if (acc < 0.8 + 0.015 * epoch):
-				sess.run(regular_train_op, feed_dict={model.x: batch_x, model.y: batch_y, model.keep_prob : 0.5})
-				sess.run(domain_train_op, feed_dict={model.x: batch_x_d, model.domain: batch_d, model.l: l, model.keep_prob: 0.5})
-		'''
-			Test the model on source target data
-		'''
+			for batch in iterate_minibatches(X_train, y_train, D_train, batch_size, shuffle=True):
+				batch_x, batch_y, batch_d = batch
+				correct_preds_sum = sess.run(tf.reduce_sum(tf.cast(correct_prediction, "float")), feed_dict={x: batch_x, y: batch_y, keep_prob : 1.0})
+				batch_y_ = np.argmax(batch_y, axis=1)
+				unlabelled_rows_sum = (batch_y_ == 0).sum()
+				acc = correct_preds_sum / (batch_size - unlabelled_rows_sum)
+				if (acc < 0.7 and epoch > 20):
+					sess.run(regular_train_op, feed_dict={model.x: batch_x, model.y: batch_y, model.domain : batch_d, model.l : l, model.keep_prob : 0.5})
+				if (acc < 0.8 + 0.0015 * epoch):
+					sess.run(regular_train_op, feed_dict={model.x: batch_x, model.y: batch_y, model.domain : batch_d, model.l : l, model.keep_prob : 0.5})
+			'''
+				Test the model on source target data
+			'''
 
-		test_pred = np.empty((0))
-		test_true = np.empty((0))
-		d_acc_sum = []
-		source_feature = np.empty([0,8,113,64])
-		for batch in iterate_minibatches(X_test, y_test, X_test, D_test, batch_size):
-			inputs, targets, inputs_domain, domains = batch
-			y_pred = sess.run(pred_labels, feed_dict = {model.x : inputs, model.y : targets, model.keep_prob : 1.0})
-			#if(epoch == max_epoch-1):
-			#	source_feature = np.vstack((source_feature, sess.run(model.feature, feed_dict = {model.x : inputs})  ))
-			d_acc = sess.run(domain_acc, feed_dict = {model.x : inputs_domain, model.domain : domains, model.keep_prob : 1.0})
-			test_pred = np.append(test_pred, y_pred, axis=0)
-			test_true = np.append(test_true, np.argmax(targets, axis=1), axis=0)
-			d_acc_sum.append(d_acc)
-		d_acc_avg =  sum(d_acc_sum) / len(d_acc_sum)
-		f1 = sk.metrics.f1_score(test_true, test_pred, average="weighted")
-		print("Iter" + str(epoch) + " Subject " + str(SOURCE_SUBJECT) + " Source Test F1 score= " + "{:.5f}".format(f1) + "		d_acc:"+str(d_acc_avg))
-		f1_lst.append(f1)
+			test_pred = np.empty((0))
+			test_true = np.empty((0))
+			d_acc_sum = []
+			for batch in iterate_minibatches(X_test, y_test, D_test, batch_size):
+				inputs, targets, domains = batch
+				y_pred, d_acc = sess.run([pred_labels, domain_acc], feed_dict = {model.x : inputs, model.y : targets, model.domain : domains, model.keep_prob : 1.0})
+				test_pred = np.append(test_pred, y_pred, axis=0)
+				test_true = np.append(test_true, np.argmax(targets, axis=1), axis=0)
+				d_acc_sum.append(d_acc)
+			d_acc_avg =  sum(d_acc_sum) / len(d_acc_sum)
+			f1 = sk.metrics.f1_score(test_true, test_pred, average="weighted")
+			print("Iter" + str(epoch) + " Subject " + str(SOURCE_SUBJECT) + " Source Test F1 score= " + "{:.5f}".format(f1) + "		d_acc:"+str(d_acc_avg))
+			f1_lst.append(f1)
 
-		'''
-			Test the model on target target data
-		'''
+			'''
+				Test the model on target target data
+			'''
 
-		test_pred = np.empty((0))
-		test_true = np.empty((0))
-		d_acc_sum = []
-		target_feature = np.empty([0,8,113,64])
-		for batch in iterate_minibatches(X_test_target, y_test_target, X_test_target, D_test_target, batch_size):
-			inputs, targets, inputs_domain, domains = batch
-			y_pred = sess.run(pred_labels, feed_dict = {model.x : inputs, model.y : targets, model.keep_prob : 1.0})
-			d_acc = sess.run(domain_acc, feed_dict = {model.x : inputs_domain, model.domain : domains, model.keep_prob : 1.0})
-			#if(epoch==max_epoch-1):
-			#	target_feature = np.vstack((target_feature, sess.run(model.feature, feed_dict = {model.x : inputs})  ))
-			test_pred = np.append(test_pred, y_pred, axis=0)
-			test_true = np.append(test_true, np.argmax(targets, axis=1), axis=0)
-			d_acc_sum.append(d_acc)
-		d_acc_avg =  sum(d_acc_sum) / len(d_acc_sum)
-		f1 = sk.metrics.f1_score(test_true, test_pred, average="weighted")
-		print(" 		Subject " + str(TARGET_SUBJECT) + " Target Test F1 score= " + "{:.5f}".format(f1)+ "		d_acc:"+str(d_acc_avg))
-		f1_tlst.append(f1)
+			test_pred = np.empty((0))
+			test_true = np.empty((0))
+			d_acc_sum = []
+			for batch in iterate_minibatches(X_test_target, y_test_target, D_test_target, batch_size):
+				inputs, targets, domains = batch
+				y_pred, d_acc = sess.run([pred_labels, domain_acc], feed_dict = {model.x : inputs, model.y : targets, model.domain : domains, model.keep_prob : 1.0})
+				test_pred = np.append(test_pred, y_pred, axis=0)
+				test_true = np.append(test_true, np.argmax(targets, axis=1), axis=0)
+				d_acc_sum.append(d_acc)
+			d_acc_avg =  sum(d_acc_sum) / len(d_acc_sum)
+			f1 = sk.metrics.f1_score(test_true, test_pred, average="weighted")
+			print(" 	Subject " + str(TARGET_SUBJECT) + " Target Test F1 score= " + "{:.5f}".format(f1)+ "		d_acc:"+str(d_acc_avg))
+			f1_tlst.append(f1)
 
-print (" Subject " + str(SOURCE_SUBJECT) + " best source f1 is " + str(max(f1_lst)))	
-print (" Subject " + str(TARGET_SUBJECT) + " best target f1 is " + str(max(f1_tlst)))
+	print (" Subject " + str(SOURCE_SUBJECT) + " best source f1 is " + str(max(f1_lst)))	
+	print (" Subject " + str(TARGET_SUBJECT) + " best target f1 is " + str(max(f1_tlst)))
 
 
