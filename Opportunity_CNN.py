@@ -1,5 +1,6 @@
 from __future__ import print_function
 import os
+import os.path
 import numpy as np
 import math
 from sklearn.metrics import f1_score
@@ -9,152 +10,18 @@ import sklearn as sk
 import cPickle as cp
 from sliding_window import sliding_window
 import random
+from pre_define import *
 
-data_path = os.getcwd() + "/../output1/"
-
-## Parameters
-global_step = tf.Variable(0, trainable=False)
-#base_learning_rate = 0.0001
-#learning_rate = tf.train.exponential_decay(base_learning_rate, global_step,
-#                                           150, 0.9)
-learning_rate = 0.0004
-batch_size = 100
-display_step = 15
-# Network Parameters
-SLIDING_WINDOW_LENGTH = 24 # timesteps
-n_hidden = 128 # hidden layer num of features
-n_classes = 18 # Activity label, including null class
-rnn_layers = 2 # Number of rnn layers
-conv_multiplier = 64
-# Session Parameters
-SLIDING_WINDOW_STEP = 12
-# Hardcoded number of sensor channels employed in the OPPORTUNITY challenge
-NB_SENSOR_CHANNELS = 113
-
-
-'''
-	funtions for get raw data
-'''
-def load_dataset(filename):
-
-	f = file(filename, 'rb')
-	data = cp.load(f)
-	f.close()
-
-	X_train, y_train = data[0]
-	X_test, y_test = data[1]
-
-	print(" ..from file {}".format(filename))
-	print(" ..reading instances: train {0}, test {1}".format(X_train.shape, X_test.shape))
-
-	X_train = X_train.astype(np.float32)
-	X_test = X_test.astype(np.float32)
-
-	# The targets are casted to int8 for GPU compatibility.
-	y_train = y_train.astype(np.uint8)
-	y_test = y_test.astype(np.uint8)
-
-	return X_train, y_train, X_test, y_test
-
-def load_all(i):
-	data = np.load(data_path+'S'+str(i)+'-Drill.dat_data.npy')
-	labels = np.load(data_path+'S'+str(i)+'-Drill.dat_activity_labels.npy')
-	for j in [1, 2, 3]:
-		data = np.vstack((data, np.load(data_path+'S'+str(i)+'-ADL'+str(j)+'.dat_data.npy')))
-		labels = np.vstack((labels, np.load(data_path+'S'+str(i)+'-ADL'+str(j)+'.dat_activity_labels.npy')))
-	return (data, labels)
-
-def load_test(i):
-	data = np.load(data_path+'S'+str(i)+'-ADL4.dat_data.npy')
-	labels = np.load(data_path+'S'+str(i)+'-ADL4.dat_activity_labels.npy')
-	data = np.vstack((data, np.load(data_path+'S'+str(i)+'-ADL5.dat_data.npy')))
-	labels = np.vstack((labels, np.load(data_path+'S'+str(i)+'-ADL5.dat_activity_labels.npy')))
-	'''
-	data = np.vstack((data, np.load(data_path+'S'+str(j)+'-ADL4.dat_data.npy')))
-	labels = np.vstack((labels, np.load(data_path+'S'+str(j)+'-ADL4.dat_activity_labels.npy')))
-	data = np.vstack((data, np.load(data_path+'S'+str(j)+'-ADL5.dat_data.npy')))
-	labels = np.vstack((labels, np.load(data_path+'S'+str(j)+'-ADL5.dat_activity_labels.npy')))
-	'''
-	return (data, labels)
-
-''' 
-	functions for segementing data
-'''
-def windows(data, size):
-	start = 0
-	while start + size < data.shape[0]:
-		yield start, start + size
-		start += SLIDING_WINDOW_STEP
-		
-def segment_signal(data, activity_labels):
-	segments = np.empty((0, SLIDING_WINDOW_LENGTH, NB_SENSOR_CHANNELS))
-	labels = np.empty((0, n_classes))
-	for (start, end) in windows(data, SLIDING_WINDOW_LENGTH):
-		segments = np.vstack([segments, np.array([data[start : end]])])
-		labels = np.vstack((labels, activity_labels[end]))
-	return segments, labels
-
-def opp_sliding_window(data_x, data_y, ws, ss):
-	data_x = sliding_window(data_x,(ws,data_x.shape[1]),(ss,1))
-	data_y = np.asarray([[i[-1]] for i in sliding_window(data_y,ws,ss)])
-	return data_x.astype(np.float32), data_y.reshape(len(data_y)).astype(np.uint8)
-
-def ReshapeActivityLabels(labels):
-	#These are label unique indexes 
-	new_labels = np.zeros(shape=(labels.shape[0], 18))
-	for i in range(labels.shape[0]):
-		new_labels[i][labels[i]] = 1
-	return new_labels
-
-def trim_null(X, y):
-	assert X.shape[0] == y.shape[0]
-	nullset = []
-	for i in range(y.shape[0]):
-		if(y[i] == 0):
-			nullset.append(i)
-	X_trim = np.delete(X, nullset, axis=0)
-	y_trim = np.delete(y, nullset, axis=0)
-	return (X_trim, y_trim)
-
-raw_X_test, raw_y_test = load_test(1)
-raw_X_test1, raw_y_test1 = load_test(2)
-
-raw_X_train, raw_train_activity_labels = load_all(1)
-print ("finish fetching")
-
-# X_train : [num_windows, 1, SLIDING_WINDOW_LENGTH, in_channels]
-# y_train : [num_windows, n_classes]
-X_train, y_train = segment_signal(raw_X_train, raw_train_activity_labels)
-X_train = np.expand_dims(X_train, 1)
-#X_train = np.load(data_path+"X_train1_123D.npy")
-#y_train = np.load(data_path+"y_train_123D.npy")
-
-X_test, y_test = segment_signal(raw_X_test, raw_y_test)
-X_test = np.expand_dims(X_test, 1)
-
-X_test1, y_test1 = segment_signal(raw_X_test1, raw_y_test1)
-X_test1 = np.expand_dims(X_test1, 1)
-#X_test = np.load(data_path+"X_test_23_45.npy")
-#y_test = np.load(data_path+"y_test_23_45.npy")
-
-#X_train, y_train, X_test, y_test = load_dataset('data/oppChallenge_gestures.data')
-#assert NB_SENSOR_CHANNELS == X_train.shape[1]
-#X_train, y_train = trim_null(X_train, y_train)
-#X_test, y_test = trim_null(X_test, y_test)
-# Sensor data is segmented using a sliding window mechanism
-#X_test, y_test = opp_sliding_window(X_test, y_test, SLIDING_WINDOW_LENGTH, SLIDING_WINDOW_STEP)
-#X_train, y_train = opp_sliding_window(X_train, y_train, SLIDING_WINDOW_LENGTH, SLIDING_WINDOW_STEP)
-# Data is reshaped since the input of the network is a 4 dimension tensor
-#X_test = X_test.reshape((-1, 1, SLIDING_WINDOW_LENGTH, NB_SENSOR_CHANNELS))
-#X_train = X_train.reshape((-1, 1, SLIDING_WINDOW_LENGTH, NB_SENSOR_CHANNELS))
-#y_train = ReshapeActivityLabels(y_train)
-#y_test = ReshapeActivityLabels(y_test)
+SOURCE_SUBJECT = 3
+TARGET_SUBJECT = 4
+ADD_TARGET = False
+data_folder = "./data/"
 '''
 	our model starts
 '''
 
 '''
-	tensorflow wrapper functions for constructing CNN
+	tensorflow wrapper functions 
 '''
 def weight_variable(shape):
 	#initial = tf.orthogonal_initializer(shape)
@@ -218,33 +85,17 @@ def apply_dense(x, input_size, out_channels):
 last_weights = weight_variable([n_hidden, n_classes])
 last_biases = weight_variable([n_classes])
 
-
+'''
+ 	Model definition here
+'''
 x = tf.placeholder("float", [None, 1, SLIDING_WINDOW_LENGTH, NB_SENSOR_CHANNELS])
 y = tf.placeholder("float", [None, n_classes])
 keep_prob = tf.placeholder("float")
-#_x_ = tf.variable(tf.empty())
-x_ = tf.transpose(x, [0, 3, 2, 1])
-#x_ shape [batch_size, NB_SENSOR_CHANNELS, SLIDING_WINDOW_LENGTH, 1]
-#x_ = tf.split(x_, NB_SENSOR_CHANNELS)
-#for 
+x_ = tf.transpose(x, [0, 3, 2, 1]) 
 layer2 = apply_conv(x_, 5, 1, conv_multiplier)
 layer3 = apply_conv(layer2, 5, conv_multiplier, conv_multiplier)
 layer4 = apply_conv(layer3, 5, conv_multiplier, conv_multiplier)
 layer5 = apply_conv(layer4, 5, conv_multiplier, conv_multiplier)
-
-
-#layer2 = apply_depthwise_conv(x, 5, NB_SENSOR_CHANNELS, conv_multiplier)
-#layer3 = apply_conv(layer2, 5, conv_multiplier * NB_SENSOR_CHANNELS, conv_multiplier * NB_SENSOR_CHANNELS)
-#layer4 = apply_depthwise_conv(layer3, 5, conv_multiplier * NB_SENSOR_CHANNELS * 2, 2)
-#layer5 = apply_depthwise_conv(layer4, 5, conv_multiplier * NB_SENSOR_CHANNELS * 4, 2)
-#layer5 = layer3
-#layer6_Base = apply_dense(layer5, 1 * conv_multiplier * NB_SENSOR_CHANNELS * (SLIDING_WINDOW_LENGTH - 4 * 4), 128)
-#layer7_Base = apply_dense(layer6_Base, 128, 128)
-#layer7_Base = layer6_Base
-#layerOut = tf.matmul(layer7_Base, last_weights) + last_biases
-
-
-
 layer67 = apply_lstm(layer5, last_weights, last_biases, rnn_layers, keep_prob)
 layerOut = layer67
 result = tf.nn.softmax(layerOut)
@@ -252,17 +103,14 @@ cross_entropy = -tf.reduce_sum(y*tf.log(result))
 all_vars   = tf.trainable_variables() 
 lossL2 = tf.add_n([ tf.nn.l2_loss(v) for v in all_vars if 'bias' not in v.name ]) * 0.0005
 loss = tf.add(cross_entropy, lossL2)
-train_step = tf.train.RMSPropOptimizer(learning_rate).minimize(loss, global_step=global_step)
+train_step = tf.train.RMSPropOptimizer(learning_rate).minimize(loss)
 correct_prediction = tf.equal(tf.argmax(result,1), tf.argmax(y,1))
+target_count = tf.reduce_sum(tf.cast( tf.equal( 
+												tf.cast(tf.argmax(y,1), "float"), tf.zeros([batch_size]) 
+												) 
+									, "float"))
 accuracy = tf.reduce_mean(tf.cast(correct_prediction, "float"))
 
-
-# Initializing the variables
-init = tf.global_variables_initializer()
-
-# Launch the graph
-sess = tf.InteractiveSession()
-sess.run(init)
 
 def iterate_minibatches(inputs, targets, batchsize, shuffle=False):
 	assert len(inputs) == len(targets)
@@ -276,67 +124,127 @@ def iterate_minibatches(inputs, targets, batchsize, shuffle=False):
 			excerpt = slice(start_idx, start_idx + batchsize)
 		yield inputs[excerpt], targets[excerpt]
 
-def main():
-	for iteration in range(100):
-		#start_random = random.randint(0, batch_size)
-		#start = start_random
-		step = 0
-		for batch in iterate_minibatches(X_train, y_train, batch_size, shuffle=True):
-			batch_x, batch_y = batch
-			acc = sess.run(accuracy, feed_dict={x: batch_x, y: batch_y, keep_prob : 1.0})
-			if (acc < 0.7 and iteration > 20):
-				sess.run(train_step, feed_dict={x: batch_x, y: batch_y, keep_prob : 0.5})
-			if (acc < 0.8 + 0.0015 * iteration):
-				sess.run(train_step, feed_dict={x: batch_x, y: batch_y, keep_prob : 0.5})
-			'''
-			if (step % 100 == 0):
-				# Calculate batch accuracy
-				acc, preds = sess.run([accuracy, tf.argmax(result, 1)], feed_dict={x: batch_x, y: batch_y, keep_prob : 1.0})
-				global_step_now, learning_rate_now = sess.run([global_step, learning_rate])
-				print ("step: " + str(global_step_now) + " learning-rate: " + str(learning_rate_now))
-				#for debugging
-				dis = [0] * n_classes
-				y_ = np.argmax(batch_y, axis = 1)
-				for _y in y_:
-					dis[_y] += 1
-				print (dis)
-				print (preds)
-				print(str(step) + ": " + "Iter " + str(iteration) +  ", Training Accuracy= " + \
-					  "{:.5f}".format(acc))
-			step += 1
-			'''
-		
-		# Classification of the testing data
-		#print("Testing: Processing {0} instances in mini-batches of {1}".format(X_test.shape[0], batch_size))
-		test_pred = np.empty((0))
-		test_true = np.empty((0))
-		#tf_confusion_metrics(result, y_train[start:], sess, {x : X_train[start:]})
-		for batch in iterate_minibatches(X_train, y_train, batch_size):
-			inputs, targets = batch
-			acc, y_pred = sess.run([accuracy, tf.argmax(result, 1)], feed_dict = {x : inputs, y : targets, keep_prob : 1.0})
-			test_pred = np.append(test_pred, y_pred, axis=0)
-			test_true = np.append(test_true, np.argmax(targets, axis=1), axis=0)
+'''
+	Constructing train / test data here
+'''
+def data_loader(subject):
+	raw_X_test, raw_y_test = load_test(subject)
+	raw_X_train, raw_train_activity_labels = load_train(subject)
+	X_train, y_train = segment_signal(raw_X_train, raw_train_activity_labels)
+	X_train = np.expand_dims(X_train, 1)
 
-		f1 = sk.metrics.f1_score(test_true, test_pred, average="weighted")
-		print("Iter " + str(iteration) + " Test F1 score= " + "{:.5f}".format(f1))
-		test_pred = np.empty((0))
-		test_true = np.empty((0))
-		#tf_confusion_metrics(result, y_train[start:], sess, {x : X_train[start:]})
-		for batch in iterate_minibatches(X_test1, y_test1, batch_size):
-			inputs, targets = batch
-			acc, y_pred = sess.run([accuracy, tf.argmax(result, 1)], feed_dict = {x : inputs, y : targets, keep_prob : 1.0})
-			test_pred = np.append(test_pred, y_pred, axis=0)
-			test_true = np.append(test_true, np.argmax(targets, axis=1), axis=0)
+	X_test, y_test = segment_signal(raw_X_test, raw_y_test)
+	X_test = np.expand_dims(X_test, 1)
+	return (X_train, y_train, X_test, y_test)
 
-		f1 = sk.metrics.f1_score(test_true, test_pred, average="weighted")
-		print("Iter " + str(iteration) + " Test1 F1 score= " + "{:.5f}".format(f1))
+'''	
+	load source subject test data
+'''
+raw_X_test, raw_y_test = load_test(SOURCE_SUBJECT)
+X_test, y_test = segment_signal(raw_X_test, raw_y_test)
+X_test = np.expand_dims(X_test, 1)
 
-def max(data):
-	max_item = 0
-	for i in data:
-		if i > max_item:
-			max_item = i
-	return i
+'''	
+	load target subject test data
+'''
+raw_X_test_target, raw_y_test_target = load_test(TARGET_SUBJECT)
+X_test_target, y_test_target = segment_signal(raw_X_test_target, raw_y_test_target)
+X_test_target = np.expand_dims(X_test_target, 1)
+
+'''
+	Load source subject train data
+'''
+source_path = data_folder+"subject"+str(SOURCE_SUBJECT)
+target_path = data_folder+"subject"+str(TARGET_SUBJECT)
+if(os.path.exists(source_path+"_X_train.npy")):
+	X_train = np.load(source_path+'_X_train.npy')
+	y_train = np.load(source_path+'_y_train.npy')
+else:
+	raw_X_train, raw_train_activity_labels = load_train(SOURCE_SUBJECT)
+	X_train, y_train = segment_signal(raw_X_train, raw_train_activity_labels)
+	X_train = np.expand_dims(X_train, 1)
+	np.save(source_path+"_X_train", X_train)
+	np.save(source_path+"_y_train", y_train)
+'''
+	Load target subject train data
+'''
+if(ADD_TARGET):
+	if(os.path.exists(target_path+"_unlabelled_data.npy")):
+		X_train_target = np.load(target_path+"_unlabelled_data.npy")
+		y_train_target = np.full((X_train_target.shape[0],n_classes),0, dtype=float)
+	else:
+		raw_X_train_unlabelled, raw_y_train_unlabelled = load_train(TARGET_SUBJECT)
+		X_train_target, y_train_target = segment_signal(raw_X_train_unlabelled, raw_y_train_unlabelled)
+		X_train_target = np.expand_dims(X_train_target, 1)
+		y_train_target = np.full((X_train_target.shape[0], n_classes),0,dtype=float)
+		np.save(target_path+"_unlabelled_data", X_train_target)
+	X_train = np.vstack((X_train, X_train_target))
+	y_train = np.vstack((y_train, y_train_target))
+
+print ("finish fetching")
+
+# Initializing the variables
+init = tf.global_variables_initializer()
+
+# Launch the graph
+gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.3)
+sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
+sess.run(init)
 
 
+f1_lst = []
+f1_tlst = []
+#def main():
+for iteration in range(100):
+	#start_random = random.randint(0, batch_size)
+	#start = start_random
+	step = 0
+	'''
+		Train the model on all training data
+	'''
+	for batch in iterate_minibatches(X_train, y_train, batch_size, shuffle=True):
+		batch_x, batch_y = batch
+		acc = sess.run(accuracy, feed_dict={x: batch_x, y: batch_y, keep_prob : 1.0})
+		#unlabelled_rows_sum, correct_preds_sum = sess.run([target_count, tf.reduce_sum(tf.cast(correct_prediction, "float"))], feed_dict={x: batch_x, y: batch_y, keep_prob : 1.0})
+		#batch_y_ = np.argmax(batch_y, axis=1)
+		#unlabelled_rows_sum = (batch_y_ == 0).sum()
+		#acc = correct_preds_sum / (batch_size - unlabelled_rows_sum)
+		if (acc < 0.7 and iteration > 20):
+			sess.run(train_step, feed_dict={x: batch_x, y: batch_y, keep_prob : 0.5})
+		if (acc < 0.8 + 0.0015 * iteration):
+			sess.run(train_step, feed_dict={x: batch_x, y: batch_y, keep_prob : 0.5})
+	'''
+		Test the model on source target data
+	'''
 
+	test_pred = np.empty((0))
+	test_true = np.empty((0))
+	for batch in iterate_minibatches(X_test, y_test, batch_size):
+		inputs, targets = batch
+		acc, y_pred = sess.run([accuracy, tf.argmax(result, 1)], feed_dict = {x : inputs, y : targets, keep_prob : 1.0})
+		test_pred = np.append(test_pred, y_pred, axis=0)
+		test_true = np.append(test_true, np.argmax(targets, axis=1), axis=0)
+
+	f1 = sk.metrics.f1_score(test_true, test_pred, average="weighted")
+	print("Iter" + str(iteration) + " Subject " + str(SOURCE_SUBJECT) + " Source Test F1 score= " + "{:.5f}".format(f1))
+	f1_lst.append(f1)
+
+	
+	
+	'''
+		Test the model on target target data
+	'''
+	test_pred = np.empty((0))
+	test_true = np.empty((0))
+	for batch in iterate_minibatches(X_test_target, y_test_target, batch_size):
+		inputs, targets = batch
+		acc, y_pred = sess.run([accuracy, tf.argmax(result, 1)], feed_dict = {x : inputs, y : targets, keep_prob : 1.0})
+		test_pred = np.append(test_pred, y_pred, axis=0)
+		test_true = np.append(test_true, np.argmax(targets, axis=1), axis=0)
+
+	f1 = sk.metrics.f1_score(test_true, test_pred, average="weighted")
+	print(" 	Subject " + str(TARGET_SUBJECT) + " Target Test F1 score= " + "{:.5f}".format(f1))
+	f1_tlst.append(f1)
+	
+print (" Subject " + str(SOURCE_SUBJECT) + " best source f1 is " + str(max(f1_lst)))	
+print (" Subject " + str(TARGET_SUBJECT) + " best target f1 is " + str(max(f1_tlst)))	
